@@ -38,11 +38,11 @@ public class Config
             .defineInRange("supportLengthMin", 1, 1, Integer.MAX_VALUE);
 
     private static final ForgeConfigSpec.IntValue DMG_DIST = BUILDER
-            .comment("Block fall damage per block fallen.")
+            .comment("Base block fall damage per block fallen.")
             .defineInRange("dmgDist", 1, 0, Integer.MAX_VALUE);
 
     private static final ForgeConfigSpec.IntValue DMG_MAX = BUILDER
-            .comment("Max block fall damage.")
+            .comment("Max block fall damage. Max is taken from support strength, but overwritten if greater than this value.")
             .defineInRange("dmgMax", 10, 0, Integer.MAX_VALUE);
 
     private static final ForgeConfigSpec.IntValue MAX_FALLING_BLOCK = BUILDER
@@ -58,7 +58,7 @@ public class Config
             .defineListAllowEmpty("overwriteBlockTags", List.of("leaves"), Config::validateTagName);
 
     private static final ForgeConfigSpec.ConfigValue<List<? extends Integer>> TAG_INTS = BUILDER
-            .comment("A list of support strength values to override blocktag hardness by, matched by index. ")
+            .comment("A list of support strength values to override blocktag hardness by, matched by index to above list. ")
             .defineListAllowEmpty("overwriteTagValues", List.of(4), e -> e instanceof Integer);
 
 

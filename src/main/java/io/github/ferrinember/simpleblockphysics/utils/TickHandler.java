@@ -143,7 +143,7 @@ public class TickHandler {
         }
 
         FallingBlockEntity fallingBlockEntity = FallingBlockEntity.fall((Level) level, blockPos, level.getBlockState(blockPos));
-        fallingBlockEntity.setHurtsEntities(Config.dmgDist,Config.dmgMax);
+        fallingBlockEntity.setHurtsEntities(Config.dmgDist,Math.min(getSupportStrength(fallingBlockEntity.getBlockState()),Config.dmgMax));
         fallingSet.add(fallingBlockEntity);
         return true;
     }
