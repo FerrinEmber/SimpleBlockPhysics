@@ -7,12 +7,14 @@ import net.minecraft.core.particles.BlockParticleOption;
 import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Tuple;
 import net.minecraft.world.entity.item.FallingBlockEntity;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LevelAccessor;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.material.Fluids;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.LogicalSide;
@@ -23,25 +25,26 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TickHandler {
     public static HashSet<FallingBlockEntity> fallingSet = new HashSet<>();
     public static LinkedHashMap<BlockPos, Tuple<LevelAccessor,Integer>> checkMap = new LinkedHashMap<>();
+    public static Integer justBreakCount = 0;
 
     public TickHandler() {
     }
 
     @SubscribeEvent
     public void onTick(TickEvent.ServerTickEvent event) {
-        boolean delay = false;
+        justBreakCount = 0;
+        boolean delay = fallingSet.size() >= Config.maxFallingBlockEntity;
 
         while(!delay && checkMap != null && !checkMap.isEmpty() && event.phase.equals(TickEvent.Phase.START) && event.side.equals(LogicalSide.SERVER)) {
+            if (fallingSet.size() >= Config.maxFallingBlockEntity || justBreakCount >= Config.maxFallingBlockEntity) {
+                delay = true;
+            }
             Map.Entry<BlockPos, Tuple<LevelAccessor, Integer>> checkVal = checkMap.entrySet().iterator().next();
             checkMap.remove(checkVal.getKey());
             BlockPos checkBlock = checkVal.getKey();
             LevelAccessor checkLevel = checkVal.getValue().getA();
             Integer checkGen = checkVal.getValue().getB();
-            if (this.checkBreak(checkBlock, checkLevel, checkGen)) {
-                if (fallingSet.size() > Config.maxFallingEntity) {
-                    delay = true;
-                }
-            }
+            this.checkBreak(checkBlock, checkLevel, checkGen);
         }
 
     }
@@ -53,7 +56,7 @@ public class TickHandler {
 
             for (ServerPlayer player : event.level.getServer().getPlayerList().getPlayers()) {
                 BlockPos blockPos = player.getOnPos();
-                if (event.level.dimension().equals(player.level().dimension()) && !player.gameMode.getGameModeForPlayer().equals(GameType.SPECTATOR) && event.level.getBlockState(blockPos).blocksMotion() && !Config.indestructibleBlocks.contains(event.level.getBlockState(blockPos).getBlock()) && !checkMap.containsKey(blockPos) && event.level.dimension() != Level.END) {
+                if (event.level.dimension().equals(player.level().dimension()) && !player.gameMode.getGameModeForPlayer().equals(GameType.SPECTATOR) && event.level.getBlockState(blockPos).blocksMotion() && !Config.indestructibleBlocks.contains(event.level.getBlockState(blockPos).getBlock()) && !checkMap.containsKey(blockPos) && Config.allowedDimensions.contains(event.level.dimension())) {
                     checkMap.put(blockPos,new Tuple<>(event.level,1));
                 }
             }
@@ -71,11 +74,15 @@ public class TickHandler {
                 if (world.dimension().equals(fallingBlockEntity.level().dimension())) {
                     if (fallingBlockEntity.isAlive() && (world.getBlockState(fallingBlockEntity.blockPosition().atY((int) Math.floor(fallingBlockEntity.getY() + fallingBlockEntity.getDeltaMovement().y - 0.04))).blocksMotion()) || aboutToGroundPos.contains(fallingBlockEntity.blockPosition().atY((int) Math.floor(fallingBlockEntity.getY() + fallingBlockEntity.getDeltaMovement().y - 0.04)))) {
                         world.playSound(null, fallingBlockEntity.blockPosition(), fallingBlockEntity.getBlockState().getSoundType().getBreakSound(), SoundSource.BLOCKS, Config.blockBreakVolume.floatValue(), 1F);
-                        if (fallingBlockEntity.getDeltaMovement().y*-5 > world.getRandom().nextIntBetweenInclusive(0,10)) {
+                        if (fallingBlockEntity.getDeltaMovement().y*-0.5-1+2*Config.fallingBlockBreakFactor >= world.getRandom().nextDouble()) {
                             world.getServer().getLevel(world.dimension()).sendParticles(new BlockParticleOption(ParticleTypes.BLOCK,fallingBlockEntity.getBlockState()),fallingBlockEntity.getX(),fallingBlockEntity.getY(),fallingBlockEntity.getZ(),10,0,0,0,1);
                             fallingBlockEntity.causeFallDamage(fallingBlockEntity.fallDistance,Config.dmgMax,fallingBlockEntity.damageSources().fallingBlock(fallingBlockEntity));
+                            if (Config.fallingBlockItemDropChance >= world.getRandom().nextDouble()) {
+                                fallingBlockEntity.spawnAtLocation(fallingBlockEntity.getBlockState().getBlock());
+                            }
                             fallingBlockEntity.discard();
-                        } else {
+                        }
+                        else {
                             int nextY = (int) Math.floor(fallingBlockEntity.getY() + fallingBlockEntity.getDeltaMovement().y - 0.04);
                             List<Vec3i> validShiftDirList = new ArrayList<>();
                             for (int i = 1; i <= 4; ++i) {
@@ -94,10 +101,15 @@ public class TickHandler {
                                 Vec3i fallVec = validShiftDirList.get(world.getRandom().nextIntBetweenInclusive(0, validShiftDirList.size() - 1));
                                 FallingBlockEntity newFallingBlockEntity = FallingBlockEntity.fall(world, fallingBlockEntity.blockPosition().offset(fallVec), fallingBlockEntity.getBlockState());
                                 newFallingBlockEntity.setHurtsEntities(Config.dmgDist, Config.dmgMax);
+                                newFallingBlockEntity.dropItem = false;
                                 tempFallingBlocks.add(newFallingBlockEntity);
                                 fallingBlockEntity.causeFallDamage(fallingBlockEntity.fallDistance,Config.dmgMax,fallingBlockEntity.damageSources().fallingBlock(fallingBlockEntity));
+                                if (Config.fallingBlockItemDropChance > world.getRandom().nextDouble()) {
+                                    fallingBlockEntity.spawnAtLocation(fallingBlockEntity.getBlockState().getBlock());
+                                }
                                 fallingBlockEntity.discard();
-                            } else {
+                            }
+                            else {
                                 aboutToGroundPos.add(fallingBlockEntity.blockPosition().atY(nextY + 1));
                             }
                         }
@@ -115,7 +127,7 @@ public class TickHandler {
 
     }
 
-    public boolean checkBreak(BlockPos blockPos, LevelAccessor level, Integer generation) {
+    public void checkBreak(BlockPos blockPos, LevelAccessor level, Integer generation) {
         HashSet<BlockPos> supportSet = new HashSet<>();
         HashSet<BlockPos> newlyAddedSet = new HashSet<>();
         HashSet<BlockPos> freshSet = new HashSet<>();
@@ -125,12 +137,12 @@ public class TickHandler {
 
             for (BlockPos currentPos : newlyAddedSet) {
                 for (BlockPos adjCurrentPos : BlockPos.betweenClosed(currentPos.offset(-1, -1, -1), currentPos.offset(1, 1, 1))) {
-                    if (level.getBlockState(adjCurrentPos).blocksMotion() && !supportSet.contains(adjCurrentPos) && adjCurrentPos.distManhattan(currentPos) == 1 && !adjCurrentPos.equals(blockPos)) {
+                    if ((level.getBlockState(adjCurrentPos).blocksMotion() || (level.getBlockState(blockPos).is(BlockTags.ICE) && (level.getBlockState(adjCurrentPos).getFluidState().isSourceOfType(Fluids.WATER)))) && !supportSet.contains(adjCurrentPos) && adjCurrentPos.distManhattan(currentPos) == 1 && !adjCurrentPos.equals(blockPos)) {
                         if (adjCurrentPos.getY() < blockPos.getY()) {
                             if (!Config.indestructibleBlocks.contains(level.getBlockState(adjCurrentPos).getBlock()) && generation <= Config.supportSearchIter) {
                                 checkMap.put(adjCurrentPos.immutable(),new Tuple<>(level,generation+1));
                             }
-                            return false;
+                            return;
                         }
                         supportSet.add(adjCurrentPos.immutable());
                         freshSet.add(adjCurrentPos.immutable());
@@ -141,11 +153,16 @@ public class TickHandler {
             newlyAddedSet.addAll(freshSet);
             freshSet.clear();
         }
-
-        FallingBlockEntity fallingBlockEntity = FallingBlockEntity.fall((Level) level, blockPos, level.getBlockState(blockPos));
-        fallingBlockEntity.setHurtsEntities(Config.dmgDist,Math.min(getSupportStrength(fallingBlockEntity.getBlockState()),Config.dmgMax));
-        fallingSet.add(fallingBlockEntity);
-        return true;
+        if (Config.removeBlocksInsteadOfFall){
+            level.destroyBlock(blockPos,Config.fallingBlockItemDropChance >= level.getRandom().nextDouble());
+            justBreakCount++;
+        }
+        else{
+            FallingBlockEntity fallingBlockEntity = FallingBlockEntity.fall((Level) level, blockPos, level.getBlockState(blockPos));
+            fallingBlockEntity.setHurtsEntities(Config.dmgDist,Math.min(getSupportStrength(fallingBlockEntity.getBlockState()),Config.dmgMax));
+            fallingBlockEntity.dropItem = false;
+            fallingSet.add(fallingBlockEntity);
+        }
     }
 
     public static int getSupportStrength(BlockState blockState) {
@@ -155,6 +172,9 @@ public class TickHandler {
                 strength.set(Config.overwrittenTagMap.get(blockTagKey));
             }
         });
+        if (Config.overwrittenBlockMap.containsKey(blockState.getBlock())) {
+            strength.set(Config.overwrittenBlockMap.get(blockState.getBlock()));
+        }
         if (strength.get() == -1) {
             float hardness = blockState.getBlock().defaultDestroyTime();
             if (hardness > 7F) {
